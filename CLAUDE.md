@@ -37,4 +37,4 @@ LangGraph (orchestration), MCP servers per namespace (tools), pgvector + sentenc
 
 ## Current state
 
-Slice: (update this line as we go). Next action is defined by SPEC.md Section 9.
+Slice: 1 complete (spine + fs.read_file end to end). Next: Slice 2 (git + fs servers full, first integration test).
