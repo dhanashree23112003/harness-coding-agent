@@ -31,3 +31,6 @@ packages = ["src/agent"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+markers = [
+    "integration: marks tests as integration tests requiring GROQ_API_KEY",
+]

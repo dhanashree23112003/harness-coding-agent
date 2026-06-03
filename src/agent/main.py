@@ -1,6 +1,7 @@
 """Slice 1 entry point: proves the spine end to end with fs.read_file."""
 import asyncio
 import json
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -39,14 +40,17 @@ def _print_trace(messages: list) -> None:
                 print(f"  content: {msg.content}")
         elif isinstance(msg, ToolMessage):
             print(f"\n{tag} ToolMessage  (raw result for tool_call_id={msg.tool_call_id})")
+            raw = msg.content
+            # MCP returns content as a list of content blocks: [{"type": "text", "text": "..."}]
+            if isinstance(raw, list) and raw and isinstance(raw[0], dict) and raw[0].get("type") == "text":
+                raw = raw[0]["text"]
             try:
-                parsed = json.loads(msg.content)
-                # truncate content field so the trace stays readable
-                if "content" in parsed:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict) and "content" in parsed:
                     parsed["content"] = parsed["content"][:120] + " [truncated]"
                 print(f"  result: {json.dumps(parsed, indent=4)}")
             except (json.JSONDecodeError, TypeError):
-                print(f"  result: {str(msg.content)[:300]}")
+                print(f"  result: {str(raw)[:300]}")
         else:
             print(f"\n{tag} {type(msg).__name__}: {str(msg)[:200]}")
     print("\n" + "=" * 60)
@@ -61,11 +65,19 @@ _SYSTEM_PROMPT = SystemMessage(content=(
 
 
 async def run(task: str) -> str:
+    t0 = time.perf_counter()
+    print("[agent] discovering tools...", flush=True)
     tools = await get_mcp_tools()
-    print(f"[agent] discovered tools: {[t.name for t in tools]}")
+    print(f"[agent] {len(tools)} tools ready  ({time.perf_counter() - t0:.2f}s)", flush=True)
+
     graph = build_graph(tools)
     init_messages = [_SYSTEM_PROMPT, HumanMessage(content=task)]
+
+    t1 = time.perf_counter()
+    print("[agent] starting graph run...", flush=True)
     result = await graph.ainvoke({"task": task, "plan": "", "messages": init_messages})
+    print(f"[agent] graph run done in {time.perf_counter() - t1:.2f}s", flush=True)
+
     _print_trace(result["messages"])
     return result["messages"][-1].content
 

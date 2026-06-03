@@ -1,12 +1,59 @@
-from pydantic import BaseModel, Field
+# Re-export hub. All tool I/O models live in fs.py and git.py.
+# Existing imports (from agent.models.tool_io import ...) continue to work.
 
-
-class ReadFileInput(BaseModel):
-    path: str = Field(..., description="Absolute or relative path to the file to read")
-    encoding: str = Field("utf-8", description="File encoding")
-
-
-class ReadFileOutput(BaseModel):
-    path: str
-    content: str
-    size_bytes: int
+from agent.models.fs import (  # noqa: F401
+    CopyInput,
+    CopyOutput,
+    DeleteInput,
+    DeleteOutput,
+    DirEntry,
+    FileStatInput,
+    FileStatOutput,
+    GrepInput,
+    GrepMatch,
+    GrepOutput,
+    ListDirInput,
+    ListDirOutput,
+    MakeDirInput,
+    MakeDirOutput,
+    MoveInput,
+    MoveOutput,
+    ReadFileInput,
+    ReadFileOutput,
+    ReadFileRangeInput,
+    ReadFileRangeOutput,
+    SearchFilesInput,
+    SearchFilesOutput,
+    WriteFileInput,
+    WriteFileOutput,
+)
+from agent.models.git import (  # noqa: F401
+    BlameEntry,
+    BranchCreateInput,
+    BranchCreateOutput,
+    BranchListInput,
+    BranchListOutput,
+    ChangedFile,
+    GitBlameInput,
+    GitBlameOutput,
+    GitBranch,
+    GitCheckoutInput,
+    GitCheckoutOutput,
+    GitCommitInput,
+    GitCommitOutput,
+    GitDiffInput,
+    GitDiffOutput,
+    GitLogInput,
+    GitLogOutput,
+    GitStashInput,
+    GitStashOutput,
+    GitStatusInput,
+    GitStatusOutput,
+    GitTagInput,
+    GitTagOutput,
+    ListChangedFilesInput,
+    ListChangedFilesOutput,
+    LogEntry,
+    ShowCommitInput,
+    ShowCommitOutput,
+)
