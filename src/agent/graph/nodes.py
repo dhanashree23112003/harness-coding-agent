@@ -1,7 +1,6 @@
 from typing import Any
 
-from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage
+from langchain_groq import ChatGroq
 
 from agent.graph.state import AgentState
 
@@ -18,14 +17,11 @@ def retrieve_node(state: AgentState) -> dict:
 
 def make_act_node(tools: list[Any]):
     """Return an act node that binds the given tools to the LLM."""
-    llm = ChatAnthropic(model="claude-haiku-4-5-20251001")
+    llm = ChatGroq(model="llama-3.3-70b-versatile")
     llm_with_tools = llm.bind_tools(tools)
 
     def act_node(state: AgentState) -> dict:
-        messages = state["messages"]
-        if not messages:
-            messages = [HumanMessage(content=state["task"])]
-        response = llm_with_tools.invoke(messages)
+        response = llm_with_tools.invoke(state["messages"])
         return {"messages": [response]}
 
     return act_node

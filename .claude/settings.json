@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\Kabira\\\\OneDrive\\\\Desktop\\\\harness-coding-agent-\\\\src\\\\agent\\\\graph\")",
+      "PowerShell(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\Kabira\\\\OneDrive\\\\Desktop\\\\harness-coding-agent-\\\\src\\\\agent\\\\mcp_client\")",
+      "PowerShell(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\Kabira\\\\OneDrive\\\\Desktop\\\\harness-coding-agent-\\\\src\\\\agent\\\\servers\")",
+      "PowerShell(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\Kabira\\\\OneDrive\\\\Desktop\\\\harness-coding-agent-\\\\src\\\\agent\\\\models\")",
+      "PowerShell(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\Kabira\\\\OneDrive\\\\Desktop\\\\harness-coding-agent-\\\\tests\\\\unit\")",
+      "PowerShell(python --version)",
+      "PowerShell(py -3.11 --version 2>$null)",
+      "PowerShell(py -3.12 --version 2>$null)",
+      "PowerShell($key = $env:ANTHROPIC_API_KEY; if \\($key\\) { Write-Host \"API key found in environment\" } else { Write-Host \"No API key in environment\" })",
+      "PowerShell(python -c \"import langchain_mcp_adapters; print\\(langchain_mcp_adapters.__version__\\)\")"
+    ]
+  }
+}
