@@ -10,6 +10,8 @@ import os
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_groq import ChatGroq
 
+from agent.logging_config import get_logger
+from agent.resilience import apply_limiter, with_retry
 from agent.subagent.contract import (
     Finding,
     NamespaceScope,
@@ -128,9 +130,12 @@ class SubagentRunner:
         self,
         all_tools_by_namespace: dict[str, list],
         repo_root: str | Path | None = None,
+        correlation_id: str | None = None,
     ) -> None:
         self._all_tools_by_namespace = all_tools_by_namespace
         self._repo_root: str | None = str(repo_root) if repo_root is not None else None
+        self._correlation_id = correlation_id or ""
+        self._log = get_logger(__name__)
 
     def _scope_tools(self, scopes: list[NamespaceScope]) -> list:
         """Return the filtered tool list for the given scopes.
@@ -190,12 +195,14 @@ class SubagentRunner:
             if tokens_used >= task.budget.max_tokens:
                 raise SubagentBudgetExceeded(steps, tokens_used, task.budget)
 
-            print(
-                f"[subagent] step {steps + 1}/{task.budget.max_steps}, "
-                f"tokens {tokens_used}/{task.budget.max_tokens}",
-                flush=True,
+            self._log.info(
+                "[subagent] step %d/%d tokens %d/%d",
+                steps + 1, task.budget.max_steps,
+                tokens_used, task.budget.max_tokens,
+                extra={"correlation_id": self._correlation_id},
             )
-            response = await bound.ainvoke(messages)
+            await apply_limiter()
+            response = await with_retry(lambda: bound.ainvoke(messages))
             steps += 1
             tokens_used += (response.usage_metadata or {}).get("total_tokens", 0)
             messages.append(response)
@@ -211,7 +218,10 @@ class SubagentRunner:
                     # it silently fall through to an unrelated tool.
                     raise ToolScopeViolation(tc["name"], list(tool_map))
 
-                print(f"[subagent] tool {tc['name']}  args={str(tc['args'])[:80]}", flush=True)
+                self._log.info(
+                    "[subagent] tool %s", tc["name"],
+                    extra={"correlation_id": self._correlation_id, "args_preview": str(tc["args"])[:80]},
+                )
                 raw = await tool.arun(tc["args"])
                 result_dict = _parse_raw(raw)
                 tool_results.append((tc["name"], result_dict))
@@ -223,10 +233,10 @@ class SubagentRunner:
         if hasattr(response, "content") and isinstance(response.content, str):
             summary = response.content
 
-        print(
-            f"[subagent] done: {steps} steps, {tokens_used} tokens, "
-            f"{len(tool_results)} tool calls",
-            flush=True,
+        self._log.info(
+            "[subagent] done: %d steps, %d tokens, %d tool calls",
+            steps, tokens_used, len(tool_results),
+            extra={"correlation_id": self._correlation_id},
         )
 
         return SubagentResult(

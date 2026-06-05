@@ -18,7 +18,7 @@ from langchain_core.messages import AIMessage, BaseMessage, RemoveMessage, Syste
 
 from agent.graph.state import AgentState
 
-COMPACT_THRESHOLD: int = int(os.environ.get("CONTEXT_COMPACT_THRESHOLD", "1500"))
+COMPACT_THRESHOLD: int = int(os.environ.get("CONTEXT_COMPACT_THRESHOLD", "800"))
 KEEP_RECENT_PAIRS: int = int(os.environ.get("CONTEXT_KEEP_PAIRS", "3"))
 
 

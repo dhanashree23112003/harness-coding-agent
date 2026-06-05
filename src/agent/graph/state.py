@@ -16,3 +16,4 @@ class AgentState(TypedDict):
     token_estimate: int               # updated by manage_context_node each step
     compaction_count: int             # how many times compaction has fired
     ledger_message_id: str | None     # id of the injected ledger SystemMessage; None before first compaction
+    correlation_id: str               # UUID for structured log correlation; set once at run() entry

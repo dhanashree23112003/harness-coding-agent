@@ -37,4 +37,4 @@ LangGraph (orchestration), MCP servers per namespace (tools), pgvector + sentenc
 
 ## Current state
 
-Slice 6 complete (context manager, 241 tests; 20+ call live run pending token reset). Next: Slice 7, scaffolding.
+Slices 1-6 functionally complete (long-horizon task proven live). Next: Slice 7 scaffolding, then MEMO/video/submit.

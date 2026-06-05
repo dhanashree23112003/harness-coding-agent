@@ -2,13 +2,17 @@
 import asyncio
 import json
 import os
+import sys
 import time
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from agent.errors import RateLimitExceeded
 from agent.graph.graph import build_graph
+from agent.logging_config import configure_logging, get_logger
 from agent.mcp_client.client import mcp_tools_session_with_namespaces
 from agent.retrieval import (
     Embedder,
@@ -21,6 +25,8 @@ from agent.retrieval import (
 from agent.subagent import SubagentRunner, make_spawn_subagent_tool
 
 load_dotenv()
+configure_logging()
+_log = get_logger(__name__)
 
 _DEMO_FILE = Path(__file__).resolve().parents[2] / "SPEC.md"
 _FIXTURE_REPO = Path(__file__).resolve().parents[2] / "fixture_repo"
@@ -118,31 +124,47 @@ _SYSTEM_PROMPT = SystemMessage(content=(
 
 
 async def run(task: str, repo_root: str | Path | None = None) -> str:
+    cid = str(uuid.uuid4())
     t0 = time.perf_counter()
-    print("[agent] starting MCP sessions and building registry...", flush=True)
+    _log.info("[agent] starting MCP sessions and building registry", extra={"correlation_id": cid})
 
     try:
         async with mcp_tools_session_with_namespaces(working_dir=repo_root) as (tools, tools_by_ns):
-            print(f"[agent] {len(tools)} tools discovered  ({time.perf_counter() - t0:.2f}s)", flush=True)
+            _log.info(
+                "[agent] %d tools discovered (%.2fs)",
+                len(tools), time.perf_counter() - t0,
+                extra={"correlation_id": cid},
+            )
 
-            # Build registry and embed all tools (once per run).
             entries = build_registry(tools_by_ns)
             texts = [entry_text(e) for e in entries]
 
-            print(f"[agent] loading sentence-transformer and embedding {len(entries)} tools...", flush=True)
+            _log.info(
+                "[agent] loading sentence-transformer and embedding %d tools", len(entries),
+                extra={"correlation_id": cid},
+            )
             t_embed = time.perf_counter()
             embedder = Embedder()
             vecs = embedder.embed_batch(texts)
-            print(f"[agent] embeddings ready  ({time.perf_counter() - t_embed:.2f}s)", flush=True)
+            _log.info(
+                "[agent] embeddings ready (%.2fs)", time.perf_counter() - t_embed,
+                extra={"correlation_id": cid},
+            )
 
             db_url = os.environ["DATABASE_URL"]
             store = PgVectorStore(db_url)
             await store.init_schema()
             await store.upsert(entries, vecs)
-            print(f"[agent] {len(entries)} tool embeddings stored in pgvector", flush=True)
+            _log.info(
+                "[agent] %d tool embeddings stored in pgvector", len(entries),
+                extra={"correlation_id": cid},
+            )
 
-            # Build the subagent tool and register it so the retriever can surface it.
-            runner = SubagentRunner(all_tools_by_namespace=tools_by_ns, repo_root=repo_root)
+            runner = SubagentRunner(
+                all_tools_by_namespace=tools_by_ns,
+                repo_root=repo_root,
+                correlation_id=cid,
+            )
             spawn_tool = make_spawn_subagent_tool(runner)
             tools = tools + [spawn_tool]
 
@@ -157,7 +179,7 @@ async def run(task: str, repo_root: str | Path | None = None) -> str:
             )
             spawn_vec = embedder.embed(entry_text(spawn_entry))
             await store.upsert([spawn_entry], [spawn_vec])
-            print("[agent] spawn_subagent tool registered", flush=True)
+            _log.info("[agent] spawn_subagent tool registered", extra={"correlation_id": cid})
 
             retriever = ToolRetriever(store, embedder, total=len(entries) + 1)
             graph = build_graph(tools, retriever)
@@ -174,20 +196,30 @@ async def run(task: str, repo_root: str | Path | None = None) -> str:
                 "token_estimate": 0,
                 "compaction_count": 0,
                 "ledger_message_id": None,
+                "correlation_id": cid,
             }
 
             t1 = time.perf_counter()
-            print("[agent] starting graph run...", flush=True)
+            _log.info("[agent] starting graph run", extra={"correlation_id": cid})
             result = await graph.ainvoke(init_state)
-            print(f"[agent] graph run done in {time.perf_counter() - t1:.2f}s", flush=True)
+            _log.info(
+                "[agent] graph run done in %.2fs", time.perf_counter() - t1,
+                extra={"correlation_id": cid},
+            )
 
             _print_trace(result["messages"])
-            # Find the last message with non-empty text content (loop-stopped state
-            # leaves the last AIMessage as a tool-call with no text).
             for msg in reversed(result["messages"]):
                 if hasattr(msg, "content") and msg.content and not getattr(msg, "tool_calls", None):
                     return msg.content
             return "(no text answer: see tool results in trace above)"
+
+    except RateLimitExceeded as e:
+        _log.error(
+            "[rate-limit] model=%s limit=daily_token_cap retry-after=%s",
+            e.model, e.retry_after or "unknown",
+            extra={"correlation_id": cid},
+        )
+        return "(rate limit: daily token cap reached)"
     except BaseException as e:
         print("\n[agent] CRASH: walking exception chain to find root cause:", flush=True)
         _walk_exc(e)
@@ -195,6 +227,10 @@ async def run(task: str, repo_root: str | Path | None = None) -> str:
 
 
 def main() -> None:
+    args = sys.argv[1:]
+    if args and args[0] == "long_horizon":
+        asyncio.run(main_long_horizon())
+        return
     task = f"Read the file {_DEMO_FILE} and tell me what the document is about in one sentence."
     print(f"[agent] task: {task}\n")
     answer = asyncio.run(run(task))
@@ -202,10 +238,11 @@ def main() -> None:
 
 
 async def main_long_horizon() -> None:
-    """Slice 6 demo: 20+ tool-call task against fixture_repo/.
+    """Slice 6/7 demo: 20+ tool-call task against fixture_repo/.
 
     Set AGENT_MODEL=llama-3.1-8b-instant (default) to conserve Groq daily cap.
-    Set CONTEXT_COMPACT_THRESHOLD to adjust when compaction fires.
+    CONTEXT_COMPACT_THRESHOLD defaults to 800; a [compaction] log line will
+    appear during the run as the context manager fires.
     """
     if not _FIXTURE_REPO.exists():
         raise FileNotFoundError(

@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from agent.errors import AgentError
+
 
 class SubagentBudget(BaseModel):
     max_steps: int = 10
@@ -45,7 +47,7 @@ class SubagentResult(BaseModel):
     error: str | None = None
 
 
-class SubagentBudgetExceeded(Exception):
+class SubagentBudgetExceeded(AgentError):
     """Raised when the subagent exhausts its step or token budget."""
 
     def __init__(
@@ -63,7 +65,7 @@ class SubagentBudgetExceeded(Exception):
         )
 
 
-class ToolScopeViolation(Exception):
+class ToolScopeViolation(AgentError):
     """Raised when the subagent attempts to call a tool outside its allowed scope."""
 
     def __init__(self, tool_name: str, allowed: list[str]) -> None:

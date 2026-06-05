@@ -1,4 +1,5 @@
 try:
     result = divide(a, b)
-except ValueError:
-    return None
+except ValueError as e:
+    result = None
+return result

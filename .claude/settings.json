@@ -26,7 +26,8 @@
       "Bash(python -m pytest tests/unit/test_subagent_isolation.py -v)",
       "Bash(python -m pytest tests/unit/ -v --tb=short)",
       "Bash(python -m pytest tests/unit/test_context_manager.py -v)",
-      "Bash(python -m pytest tests/unit/test_path_resolution.py -v)"
+      "Bash(python -m pytest tests/unit/test_path_resolution.py -v)",
+      "Bash(python -m pytest tests/unit/test_retry.py tests/unit/test_rate_limiter.py -v --tb=short)"
     ]
   }
 }

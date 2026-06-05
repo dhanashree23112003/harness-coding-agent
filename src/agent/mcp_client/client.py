@@ -9,6 +9,8 @@ from typing import Any, AsyncIterator
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 
+from agent.resilience import with_retry
+
 _SERVERS_DIR = Path(__file__).resolve().parents[2] / "agent" / "servers"
 _FS_SERVER   = _SERVERS_DIR / "fs_server.py"
 _GIT_SERVER  = _SERVERS_DIR / "git_server.py"
@@ -85,10 +87,11 @@ async def mcp_tools_session(working_dir: str | Path | None = None) -> AsyncItera
         sessions: dict[str, Any] = {}
         for name in _NS_ORDER:
             sessions[name] = await stack.enter_async_context(client.session(name))
-        tools_by_ns: dict[str, list] = {
-            name: await load_mcp_tools(sess, server_name=name)
-            for name, sess in sessions.items()
-        }
+        tools_by_ns: dict[str, list] = {}
+        for name, sess in sessions.items():
+            tools_by_ns[name] = await with_retry(
+                lambda s=sess, n=name: load_mcp_tools(s, server_name=n)
+            )
         yield [t for name in _NS_ORDER for t in tools_by_ns[name]]
 
 
@@ -110,9 +113,10 @@ async def mcp_tools_session_with_namespaces(
         sessions: dict[str, Any] = {}
         for name in _NS_ORDER:
             sessions[name] = await stack.enter_async_context(client.session(name))
-        tools_by_ns: dict[str, list] = {
-            name: await load_mcp_tools(sess, server_name=name)
-            for name, sess in sessions.items()
-        }
+        tools_by_ns: dict[str, list] = {}
+        for name, sess in sessions.items():
+            tools_by_ns[name] = await with_retry(
+                lambda s=sess, n=name: load_mcp_tools(s, server_name=n)
+            )
         all_tools = [t for name in _NS_ORDER for t in tools_by_ns[name]]
         yield all_tools, tools_by_ns

@@ -6,10 +6,14 @@ from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
 from langchain_groq import ChatGroq
 
 from agent.graph.state import AgentState
+from agent.logging_config import get_logger
+from agent.resilience import apply_limiter, with_retry
 from agent.retrieval.retriever import _DEFAULT_K, _K_WIDEN_STEP, ToolRetriever
 
 _MISS_CAP = 3
 _LOOP_THRESHOLD: int = int(os.environ.get("AGENT_LOOP_THRESHOLD", "3"))
+
+_log = get_logger(__name__)
 
 
 def _next_repeat_count(
@@ -72,9 +76,10 @@ def make_retrieve_node(retriever: ToolRetriever):
     async def retrieve_node(state: AgentState) -> dict:
         k = state.get("retrieval_k", _DEFAULT_K)
         names = await retriever.retrieve(_goal(state), k)
-        print(
-            f"[retrieve] k={k}, retrieved {len(names)} tools: {sorted(names)}",
-            flush=True,
+        cid = state.get("correlation_id", "")
+        _log.info(
+            "[retrieve] k=%d retrieved %d tools", k, len(names),
+            extra={"correlation_id": cid, "tools": sorted(names)},
         )
         return {"available_tool_names": names}
 
@@ -91,33 +96,38 @@ def _goal(state: AgentState) -> str:
 
 
 def make_act_node(tools: list[Any], retriever: ToolRetriever | None = None):
-    """Return an act node that binds the retrieved tool subset to the LLM.
+    """Return an async act node that binds the retrieved tool subset to the LLM.
 
     Falls back to all tools when the available set is empty or when
     retrieval_miss_count reaches _MISS_CAP (prevents infinite miss loops).
 
-    Updates consecutive_repeat_count in state: increments when the model
-    produces the same tool calls as its immediately preceding turn, resets
-    otherwise. _should_continue reads this counter to detect stuck loops.
+    Model calls are wrapped with rate-limiting and exponential-backoff retry.
+    Updates consecutive_repeat_count in state.
     """
     llm = ChatGroq(model=os.environ.get("AGENT_MODEL", "llama-3.1-8b-instant"))
     tool_by_name = {t.name: t for t in tools}
 
-    def act_node(state: AgentState) -> dict:
+    async def act_node(state: AgentState) -> dict:
         available = state.get("available_tool_names", [])
         miss_count = state.get("retrieval_miss_count", 0)
+        cid = state.get("correlation_id", "")
 
         if miss_count >= _MISS_CAP or not available:
             subset = tools
             if miss_count >= _MISS_CAP:
-                print(f"[act] MISS CAP reached: binding all {len(tools)} tools", flush=True)
+                _log.warning(
+                    "[act] miss cap reached: binding all %d tools", len(tools),
+                    extra={"correlation_id": cid},
+                )
         else:
             subset = [tool_by_name[n] for n in available if n in tool_by_name]
 
         bound = llm.bind_tools(subset)
-        response = bound.invoke(state["messages"])
+        messages = state["messages"]
 
-        # Find the immediately preceding AIMessage with tool_calls to compare.
+        await apply_limiter()
+        response = await with_retry(lambda: bound.ainvoke(messages))
+
         prev_calls: list[dict] | None = None
         for msg in reversed(state.get("messages", [])):
             if isinstance(msg, AIMessage) and msg.tool_calls:
