@@ -37,4 +37,4 @@ LangGraph (orchestration), MCP servers per namespace (tools), pgvector + sentenc
 
 ## Current state
 
-lice 5 complete (subagent, 208 tests; live integration pending token reset). Next: Slice 6, long-horizon.
+Slice 6 complete (context manager, 241 tests; 20+ call live run pending token reset). Next: Slice 7, scaffolding.

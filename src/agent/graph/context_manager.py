@@ -18,7 +18,7 @@ from langchain_core.messages import AIMessage, BaseMessage, RemoveMessage, Syste
 
 from agent.graph.state import AgentState
 
-COMPACT_THRESHOLD: int = int(os.environ.get("CONTEXT_COMPACT_THRESHOLD", "8000"))
+COMPACT_THRESHOLD: int = int(os.environ.get("CONTEXT_COMPACT_THRESHOLD", "1500"))
 KEEP_RECENT_PAIRS: int = int(os.environ.get("CONTEXT_KEEP_PAIRS", "3"))
 
 
@@ -158,10 +158,11 @@ def compact_messages(state: AgentState) -> dict:
     remaining_messages = [m for m in messages if m.id not in remove_ids]
     new_estimate = estimate_tokens(remaining_messages) + estimate_tokens([ledger_msg])
 
+    stale_tool_count = sum(len(tms) for _, tms in pairs_to_compact)
     print(
-        f"[context] compaction #{compaction_count}: "
-        f"dropped {len(pairs_to_compact)} pairs, "
-        f"tokens {state.get('token_estimate', 0)} -> ~{new_estimate}",
+        f"[compaction] tokens {state.get('token_estimate', estimate_tokens(messages))} "
+        f"over threshold {COMPACT_THRESHOLD}, built ledger, "
+        f"dropped {stale_tool_count} stale tool messages, plan preserved",
         flush=True,
     )
 
@@ -186,8 +187,4 @@ def manage_context_node(state: AgentState) -> dict:
     if estimate < COMPACT_THRESHOLD:
         return {"token_estimate": estimate}
 
-    print(
-        f"[context] token estimate {estimate} >= threshold {COMPACT_THRESHOLD}, compacting",
-        flush=True,
-    )
     return compact_messages(state)
