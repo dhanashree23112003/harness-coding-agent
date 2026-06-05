@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
@@ -8,6 +9,7 @@ from agent.graph.state import AgentState
 from agent.retrieval.retriever import _DEFAULT_K, _K_WIDEN_STEP, ToolRetriever
 
 _MISS_CAP = 3
+_LOOP_THRESHOLD: int = int(os.environ.get("AGENT_LOOP_THRESHOLD", "3"))
 
 
 def _next_repeat_count(
@@ -98,7 +100,7 @@ def make_act_node(tools: list[Any], retriever: ToolRetriever | None = None):
     produces the same tool calls as its immediately preceding turn, resets
     otherwise. _should_continue reads this counter to detect stuck loops.
     """
-    llm = ChatGroq(model="llama-3.3-70b-versatile")
+    llm = ChatGroq(model=os.environ.get("AGENT_MODEL", "llama-3.1-8b-instant"))
     tool_by_name = {t.name: t for t in tools}
 
     def act_node(state: AgentState) -> dict:

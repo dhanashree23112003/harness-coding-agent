@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import os
+
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_groq import ChatGroq
 
@@ -162,7 +164,7 @@ class SubagentRunner:
         scoped_tools = self._scope_tools(task.allowed_scopes)
         tool_map = {t.name: t for t in scoped_tools}
 
-        llm = ChatGroq(model="llama-3.3-70b-versatile")
+        llm = ChatGroq(model=os.environ.get("AGENT_MODEL", "llama-3.1-8b-instant"))
         bound = llm.bind_tools(scoped_tools)
 
         messages: list = [_SYSTEM, HumanMessage(content=task.brief)]

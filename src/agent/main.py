@@ -1,4 +1,4 @@
-"""Entry point: agent spine with tool-retrieval layer (Slice 3)."""
+"""Entry point: agent spine with tool-retrieval layer + context manager (Slice 6)."""
 import asyncio
 import json
 import os
@@ -23,6 +23,30 @@ from agent.subagent import SubagentRunner, make_spawn_subagent_tool
 load_dotenv()
 
 _DEMO_FILE = Path(__file__).resolve().parents[2] / "SPEC.md"
+_FIXTURE_REPO = Path(__file__).resolve().parents[2] / "fixture_repo"
+
+_LONG_HORIZON_TASK_TEMPLATE = """\
+Working in the repository at {repo}:
+
+1. Check git status and list all Python files in the repo.
+2. Read calculator.py and app.py to understand the existing code.
+3. Use ast.find_references to locate all callers of the `divide` function.
+4. Read each caller file in full.
+5. Add input validation to `divide()` in calculator.py: raise ValueError when \
+the divisor is zero or when either argument is not a number. \
+Update app.py to catch ValueError from divide and return None instead of crashing.
+6. Run the full test suite. Read test_calculator.py.
+7. Add tests for the new validation behaviour: divide by zero raises ValueError, \
+non-numeric input raises ValueError.
+8. Run the suite again. If tests still fail, read the failure output carefully and fix.
+9. If any tests fail after two runs, spawn a test-triage subagent \
+(scopes: test + fs.read_file) to identify the exact failures and return findings.
+10. Apply any fixes identified by the subagent findings, then run the suite one \
+final time.
+11. Commit the final working state with the message \
+"feat: add input validation to divide".
+Report which tests were added and confirm all tests pass.\
+"""
 
 
 def _print_trace(messages: list) -> None:
@@ -125,6 +149,10 @@ async def run(task: str) -> str:
             "retrieval_k": 12,
             "retrieval_miss_count": 0,
             "consecutive_repeat_count": 0,
+            "progress_ledger": "",
+            "token_estimate": 0,
+            "compaction_count": 0,
+            "ledger_message_id": None,
         }
 
         t1 = time.perf_counter()
@@ -145,6 +173,23 @@ def main() -> None:
     task = f"Read the file {_DEMO_FILE} and tell me what the document is about in one sentence."
     print(f"[agent] task: {task}\n")
     answer = asyncio.run(run(task))
+    print(f"\n[agent] answer:\n{answer}")
+
+
+async def main_long_horizon() -> None:
+    """Slice 6 demo: 20+ tool-call task against fixture_repo/.
+
+    Set AGENT_MODEL=llama-3.1-8b-instant (default) to conserve Groq daily cap.
+    Set CONTEXT_COMPACT_THRESHOLD to adjust when compaction fires.
+    """
+    if not _FIXTURE_REPO.exists():
+        raise FileNotFoundError(
+            f"fixture_repo not found at {_FIXTURE_REPO}. "
+            "It should be committed at the repo root."
+        )
+    task = _LONG_HORIZON_TASK_TEMPLATE.format(repo=_FIXTURE_REPO)
+    print(f"[agent] long-horizon task:\n{task}\n")
+    answer = await run(task)
     print(f"\n[agent] answer:\n{answer}")
 
 

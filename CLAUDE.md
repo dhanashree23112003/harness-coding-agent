@@ -37,4 +37,4 @@ LangGraph (orchestration), MCP servers per namespace (tools), pgvector + sentenc
 
 ## Current state
 
-Slice 2 complete (23 tools, integration test passing on Windows). Next: Slice 3, the retrieval layer.
+lice 5 complete (subagent, 208 tests; live integration pending token reset). Next: Slice 6, long-horizon.

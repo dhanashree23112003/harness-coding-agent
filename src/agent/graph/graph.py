@@ -7,7 +7,8 @@ from langchain_core.messages import AIMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from agent.graph.nodes import make_act_node, make_retrieve_node, plan_node, widen_node
+from agent.graph.context_manager import manage_context_node
+from agent.graph.nodes import _LOOP_THRESHOLD, make_act_node, make_retrieve_node, plan_node, widen_node
 from agent.graph.state import AgentState
 from agent.retrieval.retriever import ToolRetriever
 
@@ -33,7 +34,7 @@ def _should_continue(state: AgentState) -> str:
     # immediately preceding AIMessage; widen_node resets it to 0. A single
     # non-consecutive repeat (read_file, other calls, read_file) stays at 0
     # and never triggers this stop.
-    if state.get("consecutive_repeat_count", 0) >= 2:
+    if state.get("consecutive_repeat_count", 0) >= _LOOP_THRESHOLD:
         print(
             "[graph] LOOP DETECTED: 2 consecutive identical tool-calling turns. Stopping.",
             flush=True,
@@ -69,6 +70,7 @@ def build_graph(tools: list[Any], retriever: ToolRetriever):
     g.add_node("widen", widen_node)
     g.add_node("act", act_node)
     g.add_node("tools", tool_node)
+    g.add_node("manage_context", manage_context_node)
 
     g.add_edge(START, "plan")
     g.add_edge("plan", "retrieve")
@@ -79,6 +81,7 @@ def build_graph(tools: list[Any], retriever: ToolRetriever):
         {"tools": "tools", "miss": "widen", "end": END},
     )
     g.add_edge("widen", "retrieve")
-    g.add_edge("tools", "act")
+    g.add_edge("tools", "manage_context")
+    g.add_edge("manage_context", "act")
 
     return g.compile()

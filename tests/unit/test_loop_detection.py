@@ -55,13 +55,16 @@ class TestNextRepeatCount:
         crc = _next_repeat_count(read_calls, other_calls, crc)
         assert crc == 0  # below the stop threshold of 2
 
-    def test_two_consecutive_identical_turns_reaches_threshold(self):
-        """same_calls x3: count reaches 2, which triggers the loop stop.
+    def test_consecutive_identical_turns_reach_threshold(self):
+        """same_calls x4: count reaches 3 (AGENT_LOOP_THRESHOLD default), triggering stop.
 
         Turn 1 (no prev): crc=0
-        Turn 2 (same as 1): crc=1  <- first repeat, agent still allowed to continue
-        Turn 3 (same as 2): crc=2  <- second consecutive identical turn, stop fires
+        Turn 2 (same as 1): crc=1  <- first repeat, still allowed
+        Turn 3 (same as 2): crc=2  <- second repeat, still allowed (Slice 6 raised threshold)
+        Turn 4 (same as 3): crc=3  <- third consecutive identical turn, stop fires
         """
+        from agent.graph.nodes import _LOOP_THRESHOLD
+
         same_calls = [_tc("git_status", cwd=".")]
 
         crc = _next_repeat_count(same_calls, None, 0)
@@ -69,11 +72,15 @@ class TestNextRepeatCount:
 
         crc = _next_repeat_count(same_calls, same_calls, crc)
         assert crc == 1
-        assert crc < 2  # not stopped yet
+        assert crc < _LOOP_THRESHOLD
 
         crc = _next_repeat_count(same_calls, same_calls, crc)
         assert crc == 2
-        assert crc >= 2  # stop threshold reached
+        assert crc < _LOOP_THRESHOLD
+
+        crc = _next_repeat_count(same_calls, same_calls, crc)
+        assert crc == 3
+        assert crc >= _LOOP_THRESHOLD  # stop threshold reached
 
 
 # ---------------------------------------------------------------------------
@@ -90,13 +97,19 @@ class TestShouldContinueLoopDetection:
             "retrieval_miss_count": 0,
         }
 
-    def test_stops_at_crc_two(self):
-        state = self._state(2, [_tc("read_file", path="a.py")])
+    def test_stops_at_crc_three(self):
+        """Threshold is now 3 (AGENT_LOOP_THRESHOLD default), raised from 2 for Slice 6."""
+        state = self._state(3, [_tc("read_file", path="a.py")])
         assert _should_continue(state) == "end"
 
-    def test_stops_at_crc_above_two(self):
+    def test_stops_at_crc_above_threshold(self):
         state = self._state(5, [_tc("read_file", path="a.py")])
         assert _should_continue(state) == "end"
+
+    def test_continues_at_crc_two(self):
+        """Second repeat still allowed: agent can retry a failing test run once more."""
+        state = self._state(2, [_tc("read_file", path="a.py")])
+        assert _should_continue(state) == "tools"
 
     def test_continues_at_crc_one(self):
         """First repeat: allow the agent one more turn."""
