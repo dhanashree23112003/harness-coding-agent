@@ -13,10 +13,12 @@ from agent.mcp_client.client import mcp_tools_session_with_namespaces
 from agent.retrieval import (
     Embedder,
     PgVectorStore,
+    ToolRegistryEntry,
     ToolRetriever,
     build_registry,
     entry_text,
 )
+from agent.subagent import SubagentRunner, make_spawn_subagent_tool
 
 load_dotenv()
 
@@ -94,7 +96,25 @@ async def run(task: str) -> str:
         await store.upsert(entries, vecs)
         print(f"[agent] {len(entries)} tool embeddings stored in pgvector", flush=True)
 
-        retriever = ToolRetriever(store, embedder, total=len(entries))
+        # Build the subagent tool and register it so the retriever can surface it.
+        runner = SubagentRunner(all_tools_by_namespace=tools_by_ns)
+        spawn_tool = make_spawn_subagent_tool(runner)
+        tools = tools + [spawn_tool]
+
+        spawn_entry = ToolRegistryEntry(
+            namespace="subagent",
+            name="spawn_subagent",
+            description=(
+                "Launch an isolated subagent to triage test failures. "
+                "Scoped to test + fs.read_file. Returns structured findings."
+            ),
+            input_schema={},
+        )
+        spawn_vec = embedder.embed(entry_text(spawn_entry))
+        await store.upsert([spawn_entry], [spawn_vec])
+        print("[agent] spawn_subagent tool registered", flush=True)
+
+        retriever = ToolRetriever(store, embedder, total=len(entries) + 1)
         graph = build_graph(tools, retriever)
 
         init_state = {

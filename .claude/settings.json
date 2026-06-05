@@ -19,7 +19,12 @@
       "Bash(python -m evals.retrieval.eval_recall)",
       "Bash(python -m pytest tests/unit/test_loop_detection.py -v)",
       "Bash(python -m pytest tests/unit/ -v)",
-      "Bash(python -c \"from evals.retrieval.labeled_pairs import PAIRS; print\\(f'OK: {len\\(PAIRS\\)} pairs'\\)\")"
+      "Bash(python -c \"from evals.retrieval.labeled_pairs import PAIRS; print\\(f'OK: {len\\(PAIRS\\)} pairs'\\)\")",
+      "Bash(python -c \"import pytest_asyncio; print\\(pytest_asyncio.__version__\\)\")",
+      "Bash(pip show *)",
+      "Bash(python -c \"import tomllib; data = tomllib.loads\\(open\\('pyproject.toml'\\).read\\(\\)\\); print\\(data.get\\('tool', {}\\).get\\('pytest', {}\\).get\\('ini_options', {}\\)\\)\")",
+      "Bash(python -m pytest tests/unit/test_subagent_isolation.py -v)",
+      "Bash(python -m pytest tests/unit/ -v --tb=short)"
     ]
   }
 }
