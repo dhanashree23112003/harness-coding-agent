@@ -10,7 +10,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from agent.errors import RateLimitExceeded
+from agent.errors import RateLimitExceeded, RequestTooLarge
 from agent.graph.graph import build_graph
 from agent.logging_config import configure_logging, get_logger
 from agent.mcp_client.client import mcp_tools_session_with_namespaces
@@ -220,6 +220,13 @@ async def run(task: str, repo_root: str | Path | None = None) -> str:
             extra={"correlation_id": cid},
         )
         return "(rate limit: daily token cap reached)"
+    except RequestTooLarge as e:
+        _log.error(
+            "[request-too-large] model=%s requested=%s tokens: compact context and retry",
+            e.model, e.requested_tokens or "unknown",
+            extra={"correlation_id": cid},
+        )
+        return "(request too large: context exceeds per-request token limit)"
     except BaseException as e:
         print("\n[agent] CRASH: walking exception chain to find root cause:", flush=True)
         _walk_exc(e)
