@@ -89,84 +89,109 @@ def _print_trace(messages: list) -> None:
     print("\n" + "=" * 60)
 
 
+def _walk_exc(e: BaseException, depth: int = 0) -> None:
+    import traceback as _tb
+    pad = "  " * depth
+    if hasattr(e, "exceptions"):
+        print(f"{pad}[exc-group] {len(e.exceptions)} inner:", flush=True)
+        for inner in e.exceptions:
+            _walk_exc(inner, depth + 1)
+    else:
+        print(f"{pad}[exc] {type(e).__name__}: {e}", flush=True)
+        lines = _tb.format_exception(type(e), e, e.__traceback__)
+        for line in "".join(lines).splitlines()[-10:]:
+            print(f"{pad}  {line}", flush=True)
+
+
 _SYSTEM_PROMPT = SystemMessage(content=(
     "You are a precise coding agent. "
     "Execute the user's task exactly as stated, no more and no less. "
     "Do not summarize, explain, or expand beyond what is explicitly asked. "
-    "When the task is complete, stop immediately."
+    "When the task is complete, stop immediately. "
+    "GROUNDING RULE: Your final answer must be based only on tool results "
+    "visible in this session. Do not claim a file was written or edited, "
+    "a test was added or passed, or a commit was made unless a successful "
+    "write_file, run_suite, git_commit, or equivalent tool result appears "
+    "in your tool call history. If a step failed or you lacked a required "
+    "tool, state that explicitly instead of claiming success."
 ))
 
 
-async def run(task: str) -> str:
+async def run(task: str, repo_root: str | Path | None = None) -> str:
     t0 = time.perf_counter()
     print("[agent] starting MCP sessions and building registry...", flush=True)
 
-    async with mcp_tools_session_with_namespaces() as (tools, tools_by_ns):
-        print(f"[agent] {len(tools)} tools discovered  ({time.perf_counter() - t0:.2f}s)", flush=True)
+    try:
+        async with mcp_tools_session_with_namespaces(working_dir=repo_root) as (tools, tools_by_ns):
+            print(f"[agent] {len(tools)} tools discovered  ({time.perf_counter() - t0:.2f}s)", flush=True)
 
-        # Build registry and embed all tools (once per run).
-        entries = build_registry(tools_by_ns)
-        texts = [entry_text(e) for e in entries]
+            # Build registry and embed all tools (once per run).
+            entries = build_registry(tools_by_ns)
+            texts = [entry_text(e) for e in entries]
 
-        print(f"[agent] loading sentence-transformer and embedding {len(entries)} tools...", flush=True)
-        t_embed = time.perf_counter()
-        embedder = Embedder()
-        vecs = embedder.embed_batch(texts)
-        print(f"[agent] embeddings ready  ({time.perf_counter() - t_embed:.2f}s)", flush=True)
+            print(f"[agent] loading sentence-transformer and embedding {len(entries)} tools...", flush=True)
+            t_embed = time.perf_counter()
+            embedder = Embedder()
+            vecs = embedder.embed_batch(texts)
+            print(f"[agent] embeddings ready  ({time.perf_counter() - t_embed:.2f}s)", flush=True)
 
-        db_url = os.environ["DATABASE_URL"]
-        store = PgVectorStore(db_url)
-        await store.init_schema()
-        await store.upsert(entries, vecs)
-        print(f"[agent] {len(entries)} tool embeddings stored in pgvector", flush=True)
+            db_url = os.environ["DATABASE_URL"]
+            store = PgVectorStore(db_url)
+            await store.init_schema()
+            await store.upsert(entries, vecs)
+            print(f"[agent] {len(entries)} tool embeddings stored in pgvector", flush=True)
 
-        # Build the subagent tool and register it so the retriever can surface it.
-        runner = SubagentRunner(all_tools_by_namespace=tools_by_ns)
-        spawn_tool = make_spawn_subagent_tool(runner)
-        tools = tools + [spawn_tool]
+            # Build the subagent tool and register it so the retriever can surface it.
+            runner = SubagentRunner(all_tools_by_namespace=tools_by_ns, repo_root=repo_root)
+            spawn_tool = make_spawn_subagent_tool(runner)
+            tools = tools + [spawn_tool]
 
-        spawn_entry = ToolRegistryEntry(
-            namespace="subagent",
-            name="spawn_subagent",
-            description=(
-                "Launch an isolated subagent to triage test failures. "
-                "Scoped to test + fs.read_file. Returns structured findings."
-            ),
-            input_schema={},
-        )
-        spawn_vec = embedder.embed(entry_text(spawn_entry))
-        await store.upsert([spawn_entry], [spawn_vec])
-        print("[agent] spawn_subagent tool registered", flush=True)
+            spawn_entry = ToolRegistryEntry(
+                namespace="subagent",
+                name="spawn_subagent",
+                description=(
+                    "Launch an isolated subagent to triage test failures. "
+                    "Scoped to test + fs.read_file. Returns structured findings."
+                ),
+                input_schema={},
+            )
+            spawn_vec = embedder.embed(entry_text(spawn_entry))
+            await store.upsert([spawn_entry], [spawn_vec])
+            print("[agent] spawn_subagent tool registered", flush=True)
 
-        retriever = ToolRetriever(store, embedder, total=len(entries) + 1)
-        graph = build_graph(tools, retriever)
+            retriever = ToolRetriever(store, embedder, total=len(entries) + 1)
+            graph = build_graph(tools, retriever)
 
-        init_state = {
-            "task": task,
-            "plan": "",
-            "messages": [_SYSTEM_PROMPT, HumanMessage(content=task)],
-            "available_tool_names": [],
-            "retrieval_k": 12,
-            "retrieval_miss_count": 0,
-            "consecutive_repeat_count": 0,
-            "progress_ledger": "",
-            "token_estimate": 0,
-            "compaction_count": 0,
-            "ledger_message_id": None,
-        }
+            init_state = {
+                "task": task,
+                "plan": "",
+                "messages": [_SYSTEM_PROMPT, HumanMessage(content=task)],
+                "available_tool_names": [],
+                "retrieval_k": 12,
+                "retrieval_miss_count": 0,
+                "consecutive_repeat_count": 0,
+                "progress_ledger": "",
+                "token_estimate": 0,
+                "compaction_count": 0,
+                "ledger_message_id": None,
+            }
 
-        t1 = time.perf_counter()
-        print("[agent] starting graph run...", flush=True)
-        result = await graph.ainvoke(init_state)
-        print(f"[agent] graph run done in {time.perf_counter() - t1:.2f}s", flush=True)
+            t1 = time.perf_counter()
+            print("[agent] starting graph run...", flush=True)
+            result = await graph.ainvoke(init_state)
+            print(f"[agent] graph run done in {time.perf_counter() - t1:.2f}s", flush=True)
 
-        _print_trace(result["messages"])
-        # Find the last message with non-empty text content (loop-stopped state
-        # leaves the last AIMessage as a tool-call with no text).
-        for msg in reversed(result["messages"]):
-            if hasattr(msg, "content") and msg.content and not getattr(msg, "tool_calls", None):
-                return msg.content
-        return "(no text answer: see tool results in trace above)"
+            _print_trace(result["messages"])
+            # Find the last message with non-empty text content (loop-stopped state
+            # leaves the last AIMessage as a tool-call with no text).
+            for msg in reversed(result["messages"]):
+                if hasattr(msg, "content") and msg.content and not getattr(msg, "tool_calls", None):
+                    return msg.content
+            return "(no text answer: see tool results in trace above)"
+    except BaseException as e:
+        print("\n[agent] CRASH: walking exception chain to find root cause:", flush=True)
+        _walk_exc(e)
+        raise
 
 
 def main() -> None:
@@ -189,7 +214,7 @@ async def main_long_horizon() -> None:
         )
     task = _LONG_HORIZON_TASK_TEMPLATE.format(repo=_FIXTURE_REPO)
     print(f"[agent] long-horizon task:\n{task}\n")
-    answer = await run(task)
+    answer = await run(task, repo_root=_FIXTURE_REPO)
     print(f"\n[agent] answer:\n{answer}")
 
 

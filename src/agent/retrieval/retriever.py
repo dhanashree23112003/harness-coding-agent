@@ -1,7 +1,9 @@
 from agent.retrieval.embedder import Embedder
 from agent.retrieval.store import PgVectorStore
 
-ALWAYS_INCLUDE: frozenset[str] = frozenset({"read_file", "git_status"})
+ALWAYS_INCLUDE: frozenset[str] = frozenset({
+    "read_file", "write_file", "git_status", "git_commit",
+})
 _DEFAULT_K = 12
 _K_WIDEN_STEP = 6
 

@@ -77,7 +77,7 @@ async def test_long_horizon_validation_task(fixture_repo):
     from agent.main import run
 
     task = _LONG_HORIZON_TASK.format(repo=fixture_repo)
-    result = await asyncio.wait_for(run(task), timeout=600)
+    result = await asyncio.wait_for(run(task, repo_root=fixture_repo), timeout=600)
 
     # Agent must mention that validation was added.
     lower = result.lower()

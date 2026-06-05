@@ -1,8 +1,10 @@
 """Async helpers for connecting to MCP servers and discovering tools."""
+import copy
+import os
 import sys
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
@@ -48,75 +50,69 @@ _CONNECTIONS = {
     },
 }
 
+_NS_ORDER = ("fs", "git", "ast", "test", "deps", "ci")
 
-async def get_mcp_tools() -> list:
+
+def _make_connections(working_dir: str | Path | None = None) -> dict:
+    connections = copy.deepcopy(_CONNECTIONS)
+    if working_dir is not None:
+        env = {**os.environ, "AGENT_REPO_ROOT": str(Path(working_dir).resolve())}
+        for name in ("fs", "ast"):
+            connections[name]["env"] = env
+    return connections
+
+
+async def get_mcp_tools(working_dir: str | Path | None = None) -> list:
     """Discover tools via per-invocation connections. Use for smoke checks only.
 
     Each tool returned here spawns a fresh subprocess per call. Use
     mcp_tools_session() for actual agent runs to avoid per-call spawn cost
     and the Windows BrokenResourceError on rapid reconnects.
     """
-    client = MultiServerMCPClient(_CONNECTIONS)
+    client = MultiServerMCPClient(_make_connections(working_dir))
     return await client.get_tools()
 
 
 @asynccontextmanager
-async def mcp_tools_session() -> AsyncIterator[list]:
+async def mcp_tools_session(working_dir: str | Path | None = None) -> AsyncIterator[list]:
     """Open persistent stdio sessions for all 6 servers and yield bound tools.
 
-    Tools returned here share the open subprocess connections for the lifetime
-    of this context manager, so no subprocess is spawned per tool call.
+    Uses AsyncExitStack so every server's teardown runs independently.
+    A broken pipe on one server does not prevent the others from closing.
     """
-    client = MultiServerMCPClient(_CONNECTIONS)
-    async with client.session("fs") as fs_session:
-        async with client.session("git") as git_session:
-            async with client.session("ast") as ast_session:
-                async with client.session("test") as test_session:
-                    async with client.session("deps") as deps_session:
-                        async with client.session("ci") as ci_session:
-                            fs_tools   = await load_mcp_tools(fs_session,   server_name="fs")
-                            git_tools  = await load_mcp_tools(git_session,  server_name="git")
-                            ast_tools  = await load_mcp_tools(ast_session,  server_name="ast")
-                            test_tools = await load_mcp_tools(test_session, server_name="test")
-                            deps_tools = await load_mcp_tools(deps_session, server_name="deps")
-                            ci_tools   = await load_mcp_tools(ci_session,   server_name="ci")
-                            yield (
-                                fs_tools + git_tools + ast_tools
-                                + test_tools + deps_tools + ci_tools
-                            )
+    client = MultiServerMCPClient(_make_connections(working_dir))
+    async with AsyncExitStack() as stack:
+        sessions: dict[str, Any] = {}
+        for name in _NS_ORDER:
+            sessions[name] = await stack.enter_async_context(client.session(name))
+        tools_by_ns: dict[str, list] = {
+            name: await load_mcp_tools(sess, server_name=name)
+            for name, sess in sessions.items()
+        }
+        yield [t for name in _NS_ORDER for t in tools_by_ns[name]]
 
 
 @asynccontextmanager
-async def mcp_tools_session_with_namespaces() -> AsyncIterator[tuple[list, dict[str, list]]]:
+async def mcp_tools_session_with_namespaces(
+    working_dir: str | Path | None = None,
+) -> AsyncIterator[tuple[list, dict[str, list]]]:
     """Like mcp_tools_session but also yields a namespace-keyed dict.
 
     Yields (all_tools, tools_by_namespace) where tools_by_namespace maps
     each server name to its tool list. The retrieval layer uses this to tag
     each tool with its namespace when building the registry.
+
+    Uses AsyncExitStack so every server's teardown runs independently.
+    A broken pipe on one server does not prevent the others from closing.
     """
-    client = MultiServerMCPClient(_CONNECTIONS)
-    async with client.session("fs") as fs_session:
-        async with client.session("git") as git_session:
-            async with client.session("ast") as ast_session:
-                async with client.session("test") as test_session:
-                    async with client.session("deps") as deps_session:
-                        async with client.session("ci") as ci_session:
-                            fs_tools   = await load_mcp_tools(fs_session,   server_name="fs")
-                            git_tools  = await load_mcp_tools(git_session,  server_name="git")
-                            ast_tools  = await load_mcp_tools(ast_session,  server_name="ast")
-                            test_tools = await load_mcp_tools(test_session, server_name="test")
-                            deps_tools = await load_mcp_tools(deps_session, server_name="deps")
-                            ci_tools   = await load_mcp_tools(ci_session,   server_name="ci")
-                            all_tools = (
-                                fs_tools + git_tools + ast_tools
-                                + test_tools + deps_tools + ci_tools
-                            )
-                            tools_by_ns: dict[str, list] = {
-                                "fs":   fs_tools,
-                                "git":  git_tools,
-                                "ast":  ast_tools,
-                                "test": test_tools,
-                                "deps": deps_tools,
-                                "ci":   ci_tools,
-                            }
-                            yield all_tools, tools_by_ns
+    client = MultiServerMCPClient(_make_connections(working_dir))
+    async with AsyncExitStack() as stack:
+        sessions: dict[str, Any] = {}
+        for name in _NS_ORDER:
+            sessions[name] = await stack.enter_async_context(client.session(name))
+        tools_by_ns: dict[str, list] = {
+            name: await load_mcp_tools(sess, server_name=name)
+            for name, sess in sessions.items()
+        }
+        all_tools = [t for name in _NS_ORDER for t in tools_by_ns[name]]
+        yield all_tools, tools_by_ns

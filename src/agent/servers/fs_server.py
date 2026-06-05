@@ -41,13 +41,26 @@ from agent.models.fs import (  # noqa: E402
 
 mcp = FastMCP("fs")
 
+import os as _os  # noqa: E402
+
+_FS_ROOT: str | None = _os.environ.get("AGENT_REPO_ROOT")
+
+
+def _resolve(path: str) -> Path:
+    p = Path(path)
+    if p.is_absolute():
+        return p
+    if _FS_ROOT:
+        return (Path(_FS_ROOT) / p).resolve()
+    return p
+
 
 @mcp.tool()
 def read_file(path: str, encoding: str = "utf-8") -> dict:
     """Read the full contents of a file and return its content and byte size."""
     req = ReadFileInput(path=path, encoding=encoding)
     try:
-        raw = Path(req.path).read_bytes()
+        raw = _resolve(req.path).read_bytes()
         return ReadFileOutput(
             path=req.path,
             content=raw.decode(req.encoding),
@@ -64,7 +77,7 @@ def read_file_range(path: str, start_line: int, end_line: int, encoding: str = "
     """Read a specific line range from a file (1-indexed, inclusive)."""
     req = ReadFileRangeInput(path=path, start_line=start_line, end_line=end_line, encoding=encoding)
     try:
-        all_lines = Path(req.path).read_text(encoding=req.encoding).splitlines()
+        all_lines = _resolve(req.path).read_text(encoding=req.encoding).splitlines()
         sliced = all_lines[req.start_line - 1 : req.end_line]
         return ReadFileRangeOutput(
             path=req.path,
@@ -84,7 +97,7 @@ def write_file(path: str, content: str, encoding: str = "utf-8", create_dirs: bo
     """Write text content to a file, optionally creating parent directories."""
     req = WriteFileInput(path=path, content=content, encoding=encoding, create_dirs=create_dirs)
     try:
-        p = Path(req.path)
+        p = _resolve(req.path)
         if req.create_dirs:
             p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(req.content, encoding=req.encoding)
@@ -98,7 +111,7 @@ def list_dir(path: str, recursive: bool = False) -> dict:
     """List the contents of a directory, returning typed entries."""
     req = ListDirInput(path=path, recursive=recursive)
     try:
-        p = Path(req.path)
+        p = _resolve(req.path)
         iterator = p.rglob("*") if req.recursive else p.iterdir()
         entries = []
         for item in sorted(iterator, key=lambda x: (x.is_file(), x.name)):
@@ -122,7 +135,7 @@ def search_files(root: str, pattern: str, max_results: int = 200) -> dict:
     """Search for files matching a glob pattern under a root directory."""
     req = SearchFilesInput(root=root, pattern=pattern, max_results=max_results)
     try:
-        matches = [str(p) for p in islice(Path(req.root).rglob(req.pattern), req.max_results)]
+        matches = [str(p) for p in islice(_resolve(req.root).rglob(req.pattern), req.max_results)]
         return SearchFilesOutput(
             root=req.root, pattern=req.pattern, matches=matches, count=len(matches)
         ).model_dump()
@@ -141,7 +154,7 @@ def grep(root: str, pattern: str, file_glob: str = "*", max_results: int = 200, 
         flags = 0 if req.case_sensitive else re.IGNORECASE
         compiled = re.compile(req.pattern, flags)
         matches: list[GrepMatch] = []
-        for fpath in Path(req.root).rglob(req.file_glob):
+        for fpath in _resolve(req.root).rglob(req.file_glob):
             if not fpath.is_file():
                 continue
             try:
@@ -166,7 +179,7 @@ def file_stat(path: str) -> dict:
     """Return metadata (size, type, modification time) for a file or directory."""
     req = FileStatInput(path=path)
     try:
-        p = Path(req.path)
+        p = _resolve(req.path)
         st = p.stat()
         return FileStatOutput(
             path=req.path,
@@ -187,7 +200,7 @@ def make_dir(path: str, parents: bool = True, exist_ok: bool = True) -> dict:
     """Create a directory, optionally creating all intermediate parents."""
     req = MakeDirInput(path=path, parents=parents, exist_ok=exist_ok)
     try:
-        Path(req.path).mkdir(parents=req.parents, exist_ok=req.exist_ok)
+        _resolve(req.path).mkdir(parents=req.parents, exist_ok=req.exist_ok)
         return MakeDirOutput(path=req.path).model_dump()
     except Exception as exc:
         return MakeDirOutput(path=req.path, success=False, error=str(exc)).model_dump()
@@ -198,11 +211,11 @@ def move(src: str, dst: str, overwrite: bool = False) -> dict:
     """Move or rename a file or directory."""
     req = MoveInput(src=src, dst=dst, overwrite=overwrite)
     try:
-        dst_path = Path(req.dst)
+        dst_path = _resolve(req.dst)
         if dst_path.exists() and not req.overwrite:
             return MoveOutput(src=req.src, dst=req.dst, success=False,
                               error=f"destination exists: {req.dst}").model_dump()
-        shutil.move(req.src, req.dst)
+        shutil.move(str(_resolve(req.src)), str(dst_path))
         return MoveOutput(src=req.src, dst=req.dst).model_dump()
     except Exception as exc:
         return MoveOutput(src=req.src, dst=req.dst, success=False, error=str(exc)).model_dump()
@@ -213,10 +226,10 @@ def delete(path: str, recursive: bool = False) -> dict:
     """Delete a file, or a directory tree when recursive=True."""
     req = DeleteInput(path=path, recursive=recursive)
     try:
-        p = Path(req.path)
+        p = _resolve(req.path)
         if p.is_dir():
             if req.recursive:
-                shutil.rmtree(req.path)
+                shutil.rmtree(str(p))
             else:
                 p.rmdir()
         else:
@@ -231,15 +244,15 @@ def copy(src: str, dst: str, overwrite: bool = False) -> dict:
     """Copy a file or directory tree to a new location."""
     req = CopyInput(src=src, dst=dst, overwrite=overwrite)
     try:
-        src_path = Path(req.src)
-        dst_path = Path(req.dst)
+        src_path = _resolve(req.src)
+        dst_path = _resolve(req.dst)
         if dst_path.exists() and not req.overwrite:
             return CopyOutput(src=req.src, dst=req.dst, success=False,
                               error=f"destination exists: {req.dst}").model_dump()
         if src_path.is_dir():
-            shutil.copytree(req.src, req.dst, dirs_exist_ok=req.overwrite)
+            shutil.copytree(str(src_path), str(dst_path), dirs_exist_ok=req.overwrite)
         else:
-            shutil.copy2(req.src, req.dst)
+            shutil.copy2(str(src_path), str(dst_path))
         return CopyOutput(src=req.src, dst=req.dst).model_dump()
     except Exception as exc:
         return CopyOutput(src=req.src, dst=req.dst, success=False, error=str(exc)).model_dump()

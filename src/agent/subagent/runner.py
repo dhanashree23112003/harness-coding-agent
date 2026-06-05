@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import os
@@ -123,8 +124,13 @@ class SubagentRunner:
     tool objects are never passed to its LLM binding.
     """
 
-    def __init__(self, all_tools_by_namespace: dict[str, list]) -> None:
+    def __init__(
+        self,
+        all_tools_by_namespace: dict[str, list],
+        repo_root: str | Path | None = None,
+    ) -> None:
         self._all_tools_by_namespace = all_tools_by_namespace
+        self._repo_root: str | None = str(repo_root) if repo_root is not None else None
 
     def _scope_tools(self, scopes: list[NamespaceScope]) -> list:
         """Return the filtered tool list for the given scopes.
@@ -167,7 +173,12 @@ class SubagentRunner:
         llm = ChatGroq(model=os.environ.get("AGENT_MODEL", "llama-3.1-8b-instant"))
         bound = llm.bind_tools(scoped_tools)
 
-        messages: list = [_SYSTEM, HumanMessage(content=task.brief)]
+        brief_content = (
+            f"Working directory: {self._repo_root}\n\n{task.brief}"
+            if self._repo_root
+            else task.brief
+        )
+        messages: list = [_SYSTEM, HumanMessage(content=brief_content)]
         steps = 0
         tokens_used = 0
         tool_results: list[tuple[str, dict]] = []

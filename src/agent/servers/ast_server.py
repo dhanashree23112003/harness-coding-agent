@@ -38,9 +38,22 @@ from agent.models.ast import (  # noqa: E402
 
 mcp = FastMCP("ast")
 
+import os as _os  # noqa: E402
+
+_AST_ROOT: str | None = _os.environ.get("AGENT_REPO_ROOT")
+
+
+def _resolve(path: str) -> str:
+    p = Path(path)
+    if p.is_absolute():
+        return path
+    if _AST_ROOT:
+        return str((Path(_AST_ROOT) / p).resolve())
+    return path
+
 
 def _read(path: str) -> str:
-    return Path(path).read_text(encoding="utf-8", errors="replace")
+    return Path(_resolve(path)).read_text(encoding="utf-8", errors="replace")
 
 
 def _parse(path: str) -> _ast.Module:
@@ -153,7 +166,7 @@ def find_references(path: str, symbol_name: str, search_root: str) -> dict:
     req = FindReferencesInput(path=path, symbol_name=symbol_name, search_root=search_root)
     try:
         refs: list[ReferenceLocation] = []
-        for py_file in Path(req.search_root).rglob("*.py"):
+        for py_file in Path(_resolve(req.search_root)).rglob("*.py"):
             try:
                 source = py_file.read_text(encoding="utf-8", errors="replace")
                 lines = source.splitlines()

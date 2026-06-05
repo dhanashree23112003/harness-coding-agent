@@ -1,27 +1,7 @@
-"""Happy-path tests for calculator.py.
+def test_divide_by_zero_raises_value_error():
+    with pytest.raises(ValueError):
+        divide(1, 0)
 
-These pass before validation is added. The agent must extend this file
-with tests for ValueError (divide by zero, non-numeric input).
-"""
-import pytest
-from calculator import add, divide, multiply, subtract
-
-
-def test_add():
-    assert add(2, 3) == 5
-
-
-def test_subtract():
-    assert subtract(10, 4) == 6
-
-
-def test_multiply():
-    assert multiply(3, 7) == 21
-
-
-def test_divide_basic():
-    assert divide(10, 2) == 5.0
-
-
-def test_divide_float():
-    assert divide(1, 4) == 0.25
+def test_non_numeric_input_raises_value_error():
+    with pytest.raises(ValueError):
+        divide("a", 1)

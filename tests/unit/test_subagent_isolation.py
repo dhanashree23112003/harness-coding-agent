@@ -162,6 +162,26 @@ class TestContextIsolation:
         assert isinstance(captured_messages[1], HumanMessage)
         assert captured_messages[1].content == brief
 
+    async def test_brief_prepends_working_dir_when_repo_root_set(self):
+        runner = SubagentRunner(_make_tools_by_namespace(), repo_root="/tmp/myrepo")
+        brief = "Run suite."
+        task = SubagentTask(brief=brief, allowed_scopes=[NamespaceScope(namespace="test")])
+        captured: list = []
+
+        async def capture(messages):
+            captured.extend(messages)
+            return AIMessage(content="done", tool_calls=[])
+
+        mock_bound = MagicMock()
+        mock_bound.ainvoke = capture
+
+        with patch("agent.subagent.runner.ChatGroq") as mock_groq:
+            mock_groq.return_value.bind_tools.return_value = mock_bound
+            await runner.run(task)
+
+        assert captured[1].content.startswith("Working directory: /tmp/myrepo")
+        assert brief in captured[1].content
+
     async def test_subagent_messages_contain_no_parent_history(self):
         """Parent messages must never leak into the subagent's context."""
         runner = SubagentRunner(_make_tools_by_namespace())
