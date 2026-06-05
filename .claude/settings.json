@@ -18,7 +18,8 @@
       "Bash(python -c \"from evals.retrieval.labeled_pairs import PAIRS; print\\(len\\(PAIRS\\)\\)\")",
       "Bash(python -m evals.retrieval.eval_recall)",
       "Bash(python -m pytest tests/unit/test_loop_detection.py -v)",
-      "Bash(python -m pytest tests/unit/ -v)"
+      "Bash(python -m pytest tests/unit/ -v)",
+      "Bash(python -c \"from evals.retrieval.labeled_pairs import PAIRS; print\\(f'OK: {len\\(PAIRS\\)} pairs'\\)\")"
     ]
   }
 }
