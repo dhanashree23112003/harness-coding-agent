@@ -1,4 +1,4 @@
-.PHONY: install test test-integration run
+.PHONY: install test test-integration eval-retrieval run
 
 install:
 	pip install -e ".[dev]"
@@ -8,6 +8,9 @@ test:
 
 test-integration:
 	pytest tests/integration/ -v -m integration
+
+eval-retrieval:
+	python -m evals.retrieval.eval_recall
 
 run:
 	python -m agent.main

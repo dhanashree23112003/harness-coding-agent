@@ -49,3 +49,20 @@ async def mcp_tools_session() -> AsyncIterator[list]:
             fs_tools = await load_mcp_tools(fs_session, server_name="fs")
             git_tools = await load_mcp_tools(git_session, server_name="git")
             yield fs_tools + git_tools
+
+
+@asynccontextmanager
+async def mcp_tools_session_with_namespaces() -> AsyncIterator[tuple[list, dict[str, list]]]:
+    """Like mcp_tools_session but also yields a namespace-keyed dict.
+
+    Yields (all_tools, tools_by_namespace) where tools_by_namespace maps
+    each server name to its tool list. The retrieval layer uses this to tag
+    each tool with its namespace when building the registry.
+    """
+    client = MultiServerMCPClient(_CONNECTIONS)
+    async with client.session("fs") as fs_session:
+        async with client.session("git") as git_session:
+            fs_tools = await load_mcp_tools(fs_session, server_name="fs")
+            git_tools = await load_mcp_tools(git_session, server_name="git")
+            tools_by_ns: dict[str, list] = {"fs": fs_tools, "git": git_tools}
+            yield fs_tools + git_tools, tools_by_ns

@@ -37,4 +37,4 @@ LangGraph (orchestration), MCP servers per namespace (tools), pgvector + sentenc
 
 ## Current state
 
-Slice: 1 complete (spine + fs.read_file end to end). Next: Slice 2 (git + fs servers full, first integration test).
+Slice 2 complete (23 tools, integration test passing on Windows). Next: Slice 3, the retrieval layer.

@@ -44,10 +44,17 @@ from agent.models.git import (  # noqa: E402
 mcp = FastMCP("git")
 
 _SEP = "\x1f"  # ASCII unit separator, safe in git log format strings
+_REPO_ROOT = str(Path(__file__).resolve().parents[3])
 
 
 def _git(args: list[str], cwd: str) -> tuple[int, str, str]:
-    """Run a git command in cwd. Returns (returncode, stdout, stderr)."""
+    """Run a git command in cwd. Returns (returncode, stdout, stderr).
+
+    Falls back to _REPO_ROOT when cwd does not exist (model may hallucinate
+    Linux paths like /home/user/project on Windows environments).
+    """
+    if not Path(cwd).exists():
+        cwd = _REPO_ROOT
     try:
         result = subprocess.run(
             ["git"] + args,
@@ -61,7 +68,7 @@ def _git(args: list[str], cwd: str) -> tuple[int, str, str]:
             stdin=subprocess.DEVNULL,
         )
         return result.returncode, result.stdout, result.stderr
-    except FileNotFoundError as exc:
+    except OSError as exc:
         return 1, "", str(exc)
 
 

@@ -1,6 +1,7 @@
-"""Slice 1 entry point: proves the spine end to end with fs.read_file."""
+"""Entry point: agent spine with tool-retrieval layer (Slice 3)."""
 import asyncio
 import json
+import os
 import time
 from pathlib import Path
 
@@ -8,7 +9,14 @@ from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from agent.graph.graph import build_graph
-from agent.mcp_client.client import get_mcp_tools
+from agent.mcp_client.client import mcp_tools_session_with_namespaces
+from agent.retrieval import (
+    Embedder,
+    PgVectorStore,
+    ToolRetriever,
+    build_registry,
+    entry_text,
+)
 
 load_dotenv()
 
@@ -41,7 +49,6 @@ def _print_trace(messages: list) -> None:
         elif isinstance(msg, ToolMessage):
             print(f"\n{tag} ToolMessage  (raw result for tool_call_id={msg.tool_call_id})")
             raw = msg.content
-            # MCP returns content as a list of content blocks: [{"type": "text", "text": "..."}]
             if isinstance(raw, list) and raw and isinstance(raw[0], dict) and raw[0].get("type") == "text":
                 raw = raw[0]["text"]
             try:
@@ -66,24 +73,56 @@ _SYSTEM_PROMPT = SystemMessage(content=(
 
 async def run(task: str) -> str:
     t0 = time.perf_counter()
-    print("[agent] discovering tools...", flush=True)
-    tools = await get_mcp_tools()
-    print(f"[agent] {len(tools)} tools ready  ({time.perf_counter() - t0:.2f}s)", flush=True)
+    print("[agent] starting MCP sessions and building registry...", flush=True)
 
-    graph = build_graph(tools)
-    init_messages = [_SYSTEM_PROMPT, HumanMessage(content=task)]
+    async with mcp_tools_session_with_namespaces() as (tools, tools_by_ns):
+        print(f"[agent] {len(tools)} tools discovered  ({time.perf_counter() - t0:.2f}s)", flush=True)
 
-    t1 = time.perf_counter()
-    print("[agent] starting graph run...", flush=True)
-    result = await graph.ainvoke({"task": task, "plan": "", "messages": init_messages})
-    print(f"[agent] graph run done in {time.perf_counter() - t1:.2f}s", flush=True)
+        # Build registry and embed all tools (once per run).
+        entries = build_registry(tools_by_ns)
+        texts = [entry_text(e) for e in entries]
 
-    _print_trace(result["messages"])
-    return result["messages"][-1].content
+        print(f"[agent] loading sentence-transformer and embedding {len(entries)} tools...", flush=True)
+        t_embed = time.perf_counter()
+        embedder = Embedder()
+        vecs = embedder.embed_batch(texts)
+        print(f"[agent] embeddings ready  ({time.perf_counter() - t_embed:.2f}s)", flush=True)
+
+        db_url = os.environ["DATABASE_URL"]
+        store = PgVectorStore(db_url)
+        await store.init_schema()
+        await store.upsert(entries, vecs)
+        print(f"[agent] {len(entries)} tool embeddings stored in pgvector", flush=True)
+
+        retriever = ToolRetriever(store, embedder, total=len(entries))
+        graph = build_graph(tools, retriever)
+
+        init_state = {
+            "task": task,
+            "plan": "",
+            "messages": [_SYSTEM_PROMPT, HumanMessage(content=task)],
+            "available_tool_names": [],
+            "retrieval_k": 12,
+            "retrieval_miss_count": 0,
+            "consecutive_repeat_count": 0,
+        }
+
+        t1 = time.perf_counter()
+        print("[agent] starting graph run...", flush=True)
+        result = await graph.ainvoke(init_state)
+        print(f"[agent] graph run done in {time.perf_counter() - t1:.2f}s", flush=True)
+
+        _print_trace(result["messages"])
+        # Find the last message with non-empty text content (loop-stopped state
+        # leaves the last AIMessage as a tool-call with no text).
+        for msg in reversed(result["messages"]):
+            if hasattr(msg, "content") and msg.content and not getattr(msg, "tool_calls", None):
+                return msg.content
+        return "(no text answer: see tool results in trace above)"
 
 
 def main() -> None:
-    task = f"Read the file {_DEMO_FILE} and tell me only its very first non-empty line."
+    task = f"Read the file {_DEMO_FILE} and tell me what the document is about in one sentence."
     print(f"[agent] task: {task}\n")
     answer = asyncio.run(run(task))
     print(f"\n[agent] answer:\n{answer}")
